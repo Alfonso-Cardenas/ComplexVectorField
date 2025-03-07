@@ -103,3 +103,7 @@ class Plot():
             im = self.canvas.render(alpha=True)
             writer.append_data(im)
             self.view.camera.orbit(angle_step, 0)
+
+    def film_partial_stationary_animation(self, writer):
+        im = self.canvas.render(alpha=False)
+        writer.append_data(im)

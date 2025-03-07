@@ -1,17 +1,17 @@
 import numpy as np
 from modules import bindings, helper_functions, parallel_program, plot, point_factory
 
-frame_amount = 90
+frame_amount = 2000
 initial_conditions_size = 20
 epsilon = 0.001
 head_start = 0#100000 empieza lo bueno
 Lambda = 0.24#0.202288
 fixed_point_tol = 0.0001
 orbit_tol = 0.01
-intermidiate_steps = 20
+intermidiate_steps = 10
 dead_point_sample=500000
 green_point_amount = 2
-samples_per_green_point = 5
+samples_per_green_point = 50
 green_point_index = 2
 N = 3
 
@@ -52,32 +52,54 @@ def get_black_points(name, h_norm_threshold):
 
 def calculate_experiment():
     # initial_conditions = point_factory.randomly_sample_S3(initial_conditions_size)[0]
-
-    green_points = np.load("saved_arrays/green_points.npy")
-    initial_conditions = (
-        np.tile(green_points, (samples_per_green_point, 1))
-        + np.random.uniform(-0.01, 0.01, (samples_per_green_point * len(green_points), 2))
-        + 1.j * np.random.uniform(-0.01, 0.01, (samples_per_green_point * len(green_points), 2))
-    )
-    initial_conditions = (initial_conditions / np.linalg.norm(initial_conditions, axis=1)[:, None]).astype(np.csingle)
-
-
-    # initial_conditions = np.load('saved_arrays/red_points.npy')
+    # green_points = np.load("saved_arrays/green_points.npy")[1:green_point_amount]
+    # initial_conditions = (
+    #     np.tile(green_points, (samples_per_green_point, 1))
+    #     + np.random.uniform(-0.1, 0.1, (samples_per_green_point * len(green_points), 2))
+    #     + 1.j * np.random.uniform(-0.1, 0.1, (samples_per_green_point * len(green_points), 2))
+    # )
+    # initial_conditions = (initial_conditions / np.linalg.norm(initial_conditions, axis=1)[:, None]).astype(np.csingle)
+    # black_points = np.load('saved_arrays/black_points.npy')
     # initial_conditions = np.vstack((initial_conditions, black_points))
     # initial_conditions = border_points
     # print(len(border_points))
+    black_points = []
+    epsilons = []
+    for name, h_norm_threshold, eps in zip(
+        [
+            # 'small_attractor',
+            # 'big_attractor',
+            'repulsor',
+        ],
+        [
+            # 0.05,
+            # 0.05,
+            0.05,
+        ],
+        [
+            # -epsilon,
+            # -epsilon,
+            epsilon,
+        ]
+    ):
+        black_points.append(get_black_points(name, h_norm_threshold))
+        epsilons += [eps] * len(black_points[-1])
 
-    color_matrix = np.zeros((2 * len(initial_conditions), 4), dtype=np.float32)
+    epsilons = np.array(epsilons, dtype=np.float32)
+    black_points = np.vstack(black_points)
+    initial_conditions = helper_functions.inverse_stereographic_projection(black_points)
+
+    color_matrix = np.zeros((len(initial_conditions), 4), dtype=np.float32)
     color_matrix[:, 3] = 0.1
 
-    return parallel_program.point_trajectories_pos_and_neg(
+    return parallel_program.point_trajectories_till_small_h(
         N,
         a,
         b,
         head_start,
         frame_amount,
         initial_conditions,
-        epsilon,
+        epsilons,
         intermidiate_steps,
         color_matrix,
     )
@@ -127,14 +149,14 @@ def render_experiment(trajectories, color_matrix, line_colors, line_connections)
     #     object_list.append(fixed_points)
     #     fixed_point_list.append(fixed_points)
 
-    # border_points = plot.Scatter3D(
-    #     pos = trajectories_projection[0],
-    #     face_color=[1,1,1],
-    #     symbol="o",
-    #     size=4,
-    #     edge_color=color_matrix,
-    # )
-    green_points = np.load("saved_arrays/green_points.npy")
+    border_points = plot.Scatter3D(
+        pos = trajectories_projection[0],
+        face_color=[1,1,1],
+        symbol="o",
+        size=4,
+        edge_color=color_matrix,
+    )
+    green_points = np.load("saved_arrays/green_points.npy")#[1:green_point_amount]
     border_endpoints = plot.Scatter3D(
         pos = helper_functions.sterographic_projection(green_points),
         face_color=[0,1,0],
@@ -143,8 +165,8 @@ def render_experiment(trajectories, color_matrix, line_colors, line_connections)
         edge_color=[0,1,0]
     )
     # np.save("green_points.npy", trajectories_projection[-1])
-    # object_list.append(border_points)
-    # border_endpoints.set_gl_state(preset = "translucent")
+    object_list.append(border_points)
+    border_endpoints.set_gl_state(preset = "translucent")
     object_list.append(border_endpoints)
 
     # np.save("initial_conditions.npy", trajectories[len(trajectories)//2])

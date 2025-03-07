@@ -8,15 +8,15 @@ frame_amount = 2000
 orbit_initial_conditions_size = 1000
 S3_sample_initial_condition_size = 1000
 epsilon = 0.001
-head_start = 15000000 #100000 empieza lo bueno
+head_start = 1000000 #100000 empieza lo bueno
 Lambda = 0.24#0.202288
 fixed_point_tol = 0.0001
 orbit_tol = 0.008
 intermidiate_steps = 20
-max_iter = 100000
+max_iter = 50000
 N = 3
-cols = 200
-rows = 200
+cols = 20
+rows = 20
 radiuses = np.linspace(0.1, 5, 20)
 radius = 0.8
 
@@ -64,6 +64,20 @@ def calculate_experiment():
             intermidiate_steps,
         )
     )
+
+    neg_trajectories, _, _, neg_line_connectopns = (
+        parallel_program.point_trajectories(
+            N,
+            a,
+            b,
+            head_start,
+            frame_amount,
+            random_conditions,
+            -epsilon,
+            intermidiate_steps,
+        )
+    )
+
     orbit_heads, line_colors = helper_functions.find_orbit_heads(trajectories, orbit_tol)
 
     return (
@@ -72,6 +86,8 @@ def calculate_experiment():
         line_colors,
         line_connections,
         orbit_heads,
+        neg_trajectories,
+        neg_line_connectopns,
     )
 
 def calc_sphere(radius, orbit_heads):
@@ -107,7 +123,7 @@ def find_border_points(head_indices, triangle_indices, S3_sample):
 
     return np.mean(border_triangle_coords, axis=1)
 
-def render_experiment(trajectories, color_matrix, line_colors, line_connections, orbit_heads):
+def render_experiment(trajectories, color_matrix, line_colors, line_connections, orbit_heads, neg_trajectories, neg_line_connections):
     object_list = []
     binding_list = []
     color_matrix[:, -1] = 1
@@ -116,6 +132,11 @@ def render_experiment(trajectories, color_matrix, line_colors, line_connections,
     integral_curves = plot.Line(pos = trajectories_projection, color = line_colors, width = 3, connect = line_connections)
     integral_curves.set_gl_state(preset='opaque', depth_test=True)
     object_list.append(integral_curves)
+
+    neg_trajectories_projection = helper_functions.sterographic_projection(neg_trajectories)
+    neg_integral_curves = plot.Line(pos = neg_trajectories_projection, color = "blue", width = 3, connect = neg_line_connections)
+    neg_integral_curves.set_gl_state(preset='opaque', depth_test=True)
+    object_list.append(neg_integral_curves)
 
     sphere = Mesh()
     sphere.set_gl_state(preset='opaque', depth_test=True)
@@ -127,7 +148,7 @@ def render_experiment(trajectories, color_matrix, line_colors, line_connections,
     S3_sample, head_indices, meshdata = calc_sphere(radius, orbit_heads)
 
     border_point_coords = find_border_points(head_indices, meshdata.get_faces(), S3_sample)
-    np.save("border_point_coords.npy", border_point_coords)
+    # np.save("border_point_coords.npy", border_point_coords)
 
     border_points = plot.Scatter3D(
         pos = helper_functions.sterographic_projection(border_point_coords),
@@ -139,6 +160,16 @@ def render_experiment(trajectories, color_matrix, line_colors, line_connections,
     object_list.append(border_points)
 
     sphere.set_data(meshdata=meshdata)
+
+    green_points = np.load('green_points.npy')
+    border_endpoints = plot.Scatter3D(
+        pos = helper_functions.sterographic_projection(green_points),
+        face_color=[0,1,0],
+        symbol="o",
+        size=4,
+        edge_color=[0,1,0],
+    )
+    object_list.append(border_endpoints)
 
     experiment_plot = plot.Plot(vsync=False, object_list=object_list, binding_list=binding_list, create_axis=False)
 

@@ -34,4 +34,4 @@ OPACITY_PRESETS = [
     dict(preset='translucent', depth_test=False),
 ]
 
-MAX_BUFFER_SIZE = np.int32(1000)
+MAX_BUFFER_SIZE = np.int32(1024)

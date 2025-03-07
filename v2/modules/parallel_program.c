@@ -42,8 +42,47 @@ void Y(int coefficient_amount, __global cfloat_t *a, __global cfloat_t *b, cfloa
     X(coefficient_amount, a, b, zs, z, x);
     cfloat_t mul = cfloat_add(cfloat_mul(cfloat_conj(x[0]), z[0]), cfloat_mul(cfloat_conj(x[1]), z[1]));
     mul = cfloat_new(-mul.imag, mul.real);
+
+    // if(mul.real * mul.real + mul.imag * mul.imag < 0.01)
+    // {
+    //     x[0] = cfloat_new(0, 0);
+    //     x[1] = cfloat_new(0, 0);
+    // }
+    // else
+    // {
     x[0] = cfloat_mul(mul, x[0]);
     x[1] = cfloat_mul(mul, x[1]);
+    // }
+}
+
+float Y2(int coefficient_amount, __global cfloat_t *a, __global cfloat_t *b, cfloat_t *zs, cfloat_t *z, cfloat_t *x)
+{
+    X(coefficient_amount, a, b, zs, z, x);
+    cfloat_t mul = cfloat_add(cfloat_mul(cfloat_conj(x[0]), z[0]), cfloat_mul(cfloat_conj(x[1]), z[1]));
+    mul = cfloat_new(-mul.imag, mul.real);
+
+    x[0] = cfloat_mul(mul, x[0]);
+    x[1] = cfloat_mul(mul, x[1]);
+
+    return sqrt(mul.real * mul.real + mul.imag * mul.imag);
+}
+
+void Y_till_small_h(int coefficient_amount, __global cfloat_t *a, __global cfloat_t *b, cfloat_t *zs, cfloat_t *z, cfloat_t *x)
+{
+    X(coefficient_amount, a, b, zs, z, x);
+    cfloat_t mul = cfloat_add(cfloat_mul(cfloat_conj(x[0]), z[0]), cfloat_mul(cfloat_conj(x[1]), z[1]));
+    mul = cfloat_new(-mul.imag, mul.real);
+
+    if(mul.real * mul.real + mul.imag * mul.imag < 0.0064)
+    {
+        x[0] = cfloat_new(0, 0);
+        x[1] = cfloat_new(0, 0);
+    }
+    else
+    {
+        x[0] = cfloat_mul(mul, x[0]);
+        x[1] = cfloat_mul(mul, x[1]);
+    }
 }
 
 void update_point(cfloat_t *z, cfloat_t *x, float epsilon)
@@ -98,6 +137,96 @@ __kernel void point_trajectories(
     }
 }
 
+__kernel void find_periodics(
+    int coefficient_amount,
+    __global cfloat_t *a,
+    __global cfloat_t *b,
+    int head_start,
+    int frame_amount,
+    int initial_conditions_size,
+    float epsilon,
+    float tol,
+    __global cfloat_t *initial_conditions,
+    __global int *is_periodic
+){
+    int gid = get_global_id(0);
+    int idx = gid * 2;
+
+    cfloat_t z[2] = {initial_conditions[idx], initial_conditions[idx + 1]};
+    cfloat_t zs[100];
+    zs[0] = cfloat_new(1,0);
+    cfloat_t x[2];
+
+    cfloat_t diff[2] = {
+        cfloat_sub(z[0], initial_conditions[idx]), cfloat_sub(z[1], initial_conditions[idx + 1])
+    };
+
+    for(int i = 0; i < head_start; i++)
+    {
+        Y(coefficient_amount, a, b, zs, z, x);
+        update_point(z, x, epsilon);
+    }
+
+    for(int i = 0; i < frame_amount; i++)
+    {
+        Y(coefficient_amount, a, b, zs, z, x);
+        update_point(z, x, epsilon);
+
+        diff[0] = cfloat_sub(z[0], initial_conditions[idx]);
+        diff[1] = cfloat_sub(z[1], initial_conditions[idx + 1]);
+
+        if(norm_squared(diff) < tol)
+        {
+            is_periodic[gid] = 1;
+            return;
+        }
+    }
+    is_periodic[gid] = 0;
+}
+
+
+__kernel void point_trajectories_till_small_h(
+    int coefficient_amount,
+    __global cfloat_t *a,
+    __global cfloat_t *b,
+    int head_start,
+    int frame_amount,
+    int initial_conditions_size,
+    int intermediate_steps,
+    __global float *epsilons,
+    __global cfloat_t *initial_conditions,
+    __global cfloat_t *trajectories
+){
+    int gid = get_global_id(0) * 2;
+    int idx_step = 2;
+    int idx = gid * frame_amount;
+    float epsilon = epsilons[get_global_id(0)];
+
+    cfloat_t z[2] = {initial_conditions[gid], initial_conditions[gid + 1]};
+    cfloat_t zs[100];
+    zs[0] = cfloat_new(1,0);
+    cfloat_t x[2];
+
+    for(int i = 0; i < head_start; i++)
+    {
+        Y_till_small_h(coefficient_amount, a, b, zs, z, x);
+        update_point(z, x, epsilon);
+    }
+
+    for(int i = 0; i < frame_amount; i++)
+    {
+        trajectories[idx] = z[0];
+        trajectories[idx + 1] = z[1];
+        for(int j = 0; j < intermediate_steps; j++)
+        {
+            Y_till_small_h(coefficient_amount, a, b, zs, z, x);
+            update_point(z, x, epsilon);
+        }
+
+        idx += idx_step;
+    }
+}
+
 __kernel void find_corresponding_head(
     int coefficient_amount,
     __global cfloat_t *a,
@@ -110,7 +239,8 @@ __kernel void find_corresponding_head(
     int max_iter,
     float epsilon,
     __global cfloat_t *initial_conditions,
-    __global int *head_indices
+    __global int *head_indices,
+    __global float *h_norms
 ){
     int gid = get_global_id(0);
     int idx = gid * 2;
@@ -120,16 +250,18 @@ __kernel void find_corresponding_head(
     zs[0] = cfloat_new(1,0);
     cfloat_t x[2];
 
+    float min_h_norm = 9999;
+
     for(int i = 0; i < head_start; i++)
     {
-        Y(coefficient_amount, a, b, zs, z, x);
+        min_h_norm = min(Y2(coefficient_amount, a, b, zs, z, x), min_h_norm);
         update_point(z, x, epsilon);
     }
 
     bool done = false;
     for(int i = 0; i < max_iter; i++)
     {
-        Y(coefficient_amount, a, b, zs, z, x);
+        min_h_norm = min(Y2(coefficient_amount, a, b, zs, z, x), min_h_norm);
         update_point(z, x, epsilon);
         for(int j = 0; j < orbit_head_amount; j++)
         {
@@ -139,10 +271,12 @@ __kernel void find_corresponding_head(
             if(norm_squared(diff) < orbit_tol)
             {
                 head_indices[gid] = j;
+                h_norms[gid] = min_h_norm;
                 return;
             }
         }
     }
+    h_norms[gid] = min_h_norm;
     head_indices[gid] = -1;
 }
 
@@ -231,4 +365,33 @@ __kernel void find_corresponding_head_not_tangent(
         }
     }
     head_indices[gid] = -1;
+}
+
+__kernel void find_min_h_norm(
+    int coefficient_amount,
+    __global cfloat_t *a,
+    __global cfloat_t *b,
+    int step_amount,
+    int initial_conditions_size,
+    float epsilon,
+    __global cfloat_t *initial_conditions,
+    __global float *h_norms
+){
+    int gid = get_global_id(0);
+    int idx = gid * 2;
+
+    cfloat_t z[2] = {initial_conditions[idx], initial_conditions[idx + 1]};
+    cfloat_t zs[100];
+    zs[0] = cfloat_new(1,0);
+    cfloat_t x[2];
+
+    float min_h_norm = 9999;
+
+    for(int i = 0; i < step_amount; i++)
+    {
+        min_h_norm = min(Y2(coefficient_amount, a, b, zs, z, x), min_h_norm);
+        update_point(z, x, epsilon);
+    }
+
+    h_norms[gid] = min_h_norm;
 }

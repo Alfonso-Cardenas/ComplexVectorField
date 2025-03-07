@@ -2,8 +2,8 @@ import numpy as np
 from modules import bindings, helper_functions, parallel_program, plot, point_factory
 
 frame_amount = 2000
-orbit_initial_conditions_size = 2000
-S3_sample_initial_condition_size = 5000
+orbit_initial_conditions_size = 200
+S3_sample_initial_condition_size = 1000
 epsilon = 0.001
 head_start = 1000000 #100000 empieza lo bueno
 Lambda = 0.24#0.202288
@@ -76,7 +76,8 @@ def calculate_experiment():
 
     # black_points = S3_sample[np.where(head_indices == -1)]
 
-    # np.save('black_points.npy', black_points)
+    # np.save('attraction_zone_sample.npy', S3_sample)
+    # np.save('attraction_zone_colors.npy', S3_sample_colors)
 
     # print(black_points)
 

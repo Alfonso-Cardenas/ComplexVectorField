@@ -84,6 +84,36 @@ def find_orbit_heads(trajectories: npt.NDArray, orbit_tol: float):
     )
 
 
+def calc_zs_powers(S3_sample, N):
+    zs_powers = np.ones((len(S3_sample), (N * (N + 1)) // 2), dtype=np.csingle)
+    idx = 1
+    for power in range(1, N):
+        last_power_idx = idx + power
+        zs_powers[:, idx: last_power_idx] = zs_powers[:, idx - power: idx] * S3_sample[:, 0, None]
+        zs_powers[:, last_power_idx] = zs_powers[:, idx - 1] * S3_sample[:, 1]
+        idx = last_power_idx + 1
+    return zs_powers
+
+
+def calc_x(S3_sample, N, a, b):
+    zs_powers = calc_zs_powers(S3_sample, N)
+    x = np.zeros_like(S3_sample)
+    x[:, 0] = np.sum(zs_powers * a, axis=1)
+    x[:, 1] = np.sum(zs_powers * b, axis=1)
+    return x
+
+
+def calc_h(S3_sample, N, a, b):
+    x = calc_x(S3_sample, N, a, b)
+    h = 1.j * (x[:, 0].conjugate() * S3_sample[:, 0] + x[:, 1].conjugate() * S3_sample[:, 1])
+    return h
+
+
+def calc_dead_points(S3_sample, N, a, b, tol):
+    h = calc_h(S3_sample, N, a, b)
+    return S3_sample[np.where(np.abs(h) < tol)]
+
+
 def timed_function(func):
     def inner(*args, **kwargs):
         start = time.time()
@@ -95,3 +125,62 @@ def timed_function(func):
 
         return returned_val
     return inner
+
+
+def normalize_vector(v):
+    v /= np.linalg.norm(v, axis=1)[:, None]
+
+def calc_perp_vecs(x, radius):
+    normalize_vector(x)
+    v = np.zeros_like(x)
+    sign = np.sign(x[:, 0])
+    sign[np.where(sign == 0)] = 1
+    v[:, 0] = - sign * x[:, 1] / x[:, 0]
+    v[:, 1] = sign
+    normalize_vector(v)
+    w = np.cross(v, x, axis=1)
+    v *= radius
+    w *= radius
+    return v, w
+
+def calc_torus_points(orbit, points_per_step, radius):
+    angles = np.linspace(0, constants.PI_TIMES_2, points_per_step)
+    c = np.cos(angles)
+    s = np.sin(angles)
+
+    x = orbit[1:] - orbit[:-1]
+    v, w = calc_perp_vecs(x, radius)
+
+    circles = (v[:, None] * c[None, :, None] + w[:, None] * s[None, :, None])
+    circles += orbit[:-1, None]
+
+    return circles.reshape(-1, 3)
+
+def calc_line_connections(trajectory_shape):
+    line_connections = np.zeros((trajectory_shape[1] * (trajectory_shape[0] - 1), 2), dtype=np.int32)
+    line_connections[:, 0] = np.arange(0, trajectory_shape[1] * (trajectory_shape[0] - 1))
+    line_connections[:, 1] = np.arange(trajectory_shape[1], trajectory_shape[1] * trajectory_shape[0])
+
+    return line_connections
+
+def calc_torus_faces(step_amount, torus_points_per_step):
+    return np.array(
+        [
+            [
+                step * torus_points_per_step + idx,
+                step * torus_points_per_step + (idx + 1) % torus_points_per_step,
+                ((step + 1) % step_amount) * torus_points_per_step + idx,
+            ]
+            for step in range(step_amount)
+            for idx in range(torus_points_per_step)
+        ] + [
+            [
+                step * torus_points_per_step + (idx + 1) % torus_points_per_step,
+                ((step + 1) % step_amount) * torus_points_per_step + idx,
+                ((step + 1) % step_amount) * torus_points_per_step + (idx + 1) % torus_points_per_step,
+            ]
+            for step in range(step_amount)
+            for idx in range(torus_points_per_step)
+        ],
+        dtype=np.int32
+    )

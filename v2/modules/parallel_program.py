@@ -71,6 +71,89 @@ def point_trajectories(
 
 
 @timed_function
+def find_periodics(
+    N: int,
+    a: npt.NDArray[np.csingle],
+    b: npt.NDArray[np.csingle],
+    head_start: int,
+    frame_amount: int,
+    initial_conditions: npt.NDArray[np.csingle],
+    epsilon: float,
+    tol: float,
+) -> npt.NDArray[np.int32]:
+
+    initial_conditions_size = np.int32(len(initial_conditions))
+    is_periodic = np.zeros(initial_conditions_size, dtype=np.int32)
+
+    a_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=a)
+    b_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=b)\
+
+    kernel = prg.find_periodics
+    kernel_args = [
+        np.int32((N * (N + 1)) / 2),
+        a_buf,
+        b_buf,
+        np.int32(head_start),
+        np.int32(frame_amount),
+        initial_conditions_size,
+        np.float32(epsilon),
+        np.float32(tol),
+    ]
+    run_kernel(kernel, initial_conditions_size, [initial_conditions], [is_periodic], *kernel_args)
+
+    return is_periodic
+
+
+@timed_function
+def point_trajectories_till_small_h(
+    N: int,
+    a: npt.NDArray[np.csingle],
+    b: npt.NDArray[np.csingle],
+    head_start: int,
+    frame_amount: int,
+    initial_conditions: npt.NDArray[np.csingle],
+    epsilons: npt.NDArray[np.float32],
+    intermediate_steps: int,
+    color_matrix: Optional[npt.NDArray[np.float32]] = None,
+) -> tuple:
+
+    initial_conditions_size = np.int32(len(initial_conditions))
+    trajectories = np.zeros((initial_conditions_size, frame_amount, 2), dtype=np.csingle)
+
+    a_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=a)
+    b_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=b)\
+
+    kernel = prg.point_trajectories_till_small_h
+    kernel_args = [
+        np.int32((N * (N + 1)) / 2),
+        a_buf,
+        b_buf,
+        np.int32(head_start),
+        np.int32(frame_amount),
+        initial_conditions_size,
+        np.int32(intermediate_steps),
+    ]
+    run_kernel(kernel, initial_conditions_size, [epsilons, initial_conditions], [trajectories], *kernel_args)
+
+    trajectories = np.swapaxes(trajectories, 0, 1)
+
+    if color_matrix is None:
+        color_matrix = np.array([
+                np.tile([1, 0, 0, 0.1], (len(initial_conditions), 1)),
+            ],
+            dtype=np.float32,
+        ).reshape(-1, 4)
+
+    line_colors = np.tile(color_matrix, (frame_amount, 1))
+
+    line_connections = np.zeros((len(color_matrix) * (frame_amount - 1), 2), dtype=np.int32)
+    line_connections[:, 0] = np.arange(0, len(color_matrix) * (frame_amount - 1))
+    line_connections[:, 1] = np.arange(len(color_matrix), len(color_matrix) * frame_amount)
+
+    return trajectories, color_matrix, line_colors, line_connections
+
+
+@timed_function
 def point_trajectories_pos_and_neg(
     N: int,
     a: npt.NDArray[np.csingle],
@@ -143,6 +226,7 @@ def find_corresponding_head(
     initial_conditions_size = np.int32(len(initial_conditions))
     orbit_head_amount = np.int32(len(orbit_heads))
     head_indices = np.zeros(initial_conditions_size, dtype=np.int32)
+    h_norms = np.zeros(initial_conditions_size, dtype=np.float32)
 
     a_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=a)
     b_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=b)
@@ -161,9 +245,39 @@ def find_corresponding_head(
         np.int32(max_iter),
         np.float32(epsilon),
     ]
-    run_kernel(kernel, initial_conditions_size, [initial_conditions], [head_indices], *kernel_args)
+    run_kernel(kernel, initial_conditions_size, [initial_conditions], [head_indices, h_norms], *kernel_args)
 
-    return head_indices, constants.COLORS[head_indices]
+    return head_indices, constants.COLORS[head_indices], h_norms
+
+
+@timed_function
+def find_min_h_norm(
+    N: int,
+    a: npt.NDArray[np.csingle],
+    b: npt.NDArray[np.csingle],
+    step_amount: int,
+    initial_conditions: npt.NDArray[np.csingle],
+    epsilon: float,
+):
+
+    initial_conditions_size = np.int32(len(initial_conditions))
+    h_norms = np.zeros(initial_conditions_size, dtype=np.float32)
+
+    a_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=a)
+    b_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=b)
+
+    kernel = prg.find_min_h_norm
+    kernel_args = [
+        np.int32((N * (N + 1)) / 2),
+        a_buf,
+        b_buf,
+        np.int32(step_amount),
+        initial_conditions_size,
+        np.float32(epsilon),
+    ]
+    run_kernel(kernel, initial_conditions_size, [initial_conditions], [h_norms], *kernel_args)
+
+    return h_norms
 
 
 @timed_function
